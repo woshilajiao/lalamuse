@@ -2,3 +2,4 @@ streamlit
 openai
 watchdog
 supabase
+python-docx
