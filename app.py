@@ -330,8 +330,11 @@ with st.sidebar:
         with c1: 
             if st.button(f"{'🔵' if sid==st.session_state.current_session_id else '📄'} {sdata['title']}", key=f"b_{sid}", use_container_width=True): st.session_state.current_session_id=sid; st.rerun()
         with c2:
-            if st.button("x", key=f"d_{sid}"): del st.session_state.history[sid]; delete_session_db(sid); 
-                if sid==st.session_state.current_session_id: st.session_state.current_session_id=None
+            if st.button("x", key=f"d_{sid}"):
+                del st.session_state.history[sid]
+                delete_session_db(sid)
+                if sid == st.session_state.current_session_id:
+                    st.session_state.current_session_id = None
                 st.rerun()
     if st.session_state.current_session_id:
         curr = st.session_state.history[st.session_state.current_session_id]
