@@ -19,7 +19,7 @@ from pypdf import PdfReader
 # 1. 基础配置
 # ==========================================
 st.set_page_config(
-    page_title="灵感缪斯 Pro Max",
+    page_title="lalaの灵感助手",
     page_icon="🎬",
     layout="wide",
     initial_sidebar_state="expanded"
