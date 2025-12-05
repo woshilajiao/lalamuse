@@ -205,7 +205,14 @@ def load_user_data(u):
     if not sb: return {}
     try: res=sb.table("chat_history").select("*").eq("username", u).execute(); return {r['id']: r['data'] for r in res.data}
     except: return {}
-def save_session_db(sid, data, u): sb=init_supabase(); sb and sb.table("chat_history").upsert({"id": sid, "username": u, "data": data}).execute()
+def save_session_db(sid, data, u):
+    sb = init_supabase()
+    if sb:
+        try:
+            # 将结果赋值给 _ (下划线)，告诉 Python "我不需要显示这个结果"
+            _ = sb.table("chat_history").upsert({"id": sid, "username": u, "data": data}).execute()
+        except:
+            pass
 def delete_session_db(sid): sb=init_supabase(); sb and sb.table("chat_history").delete().eq("id", sid).execute()
 
 # ==========================================
