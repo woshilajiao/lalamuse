@@ -3,3 +3,5 @@ openai
 watchdog
 supabase
 python-docx
+groq
+pypdf
