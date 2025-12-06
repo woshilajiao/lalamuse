@@ -325,51 +325,78 @@ st.title(SESS['title'])
 
 # === 核心逻辑路由 ===
 
+# === 模式 1: 对话 (含语音编辑功能) ===
 if app_mode == "💬 对话":
     st.header("💬 灵感对话")
+    
+    # 0. 初始化语音暂存变量
+    if "voice_draft" not in st.session_state:
+        st.session_state.voice_draft = ""
+
+    # 1. 显示历史记录
     for m in SESS["messages"]: 
         with st.chat_message(m["role"]): st.markdown(m["content"])
     
-    # --- 新增：语音录入区 ---
+    # 2. 语音录制按钮
     c_mic, c_void = st.columns([0.2, 0.8])
     with c_mic:
-        # 录音按钮：点击录音，再次点击停止并发送
-        audio = mic_recorder(
-            start_prompt="🎤 录音",
-            stop_prompt="⏹️ 发送",
-            key='audio_chat',
-            just_once=True,
-            use_container_width=True
-        )
+        audio = mic_recorder(start_prompt="🎤 录音", stop_prompt="⏹️ 停止", key='audio_chat', just_once=True)
     
-    # 接收文本输入
-    p = st.chat_input("输入灵感...")
-    
-    # 逻辑：优先处理语音，其次处理文本
-    final_input = None
+    # 3. 处理录音数据 -> 存入草稿
     if audio and 'bytes' in audio:
         with st.spinner("正在听写..."):
-            final_input = transcribe_mic(audio['bytes'])
-            if "❌" in final_input or "失败" in final_input:
-                st.error(final_input)
-                final_input = None
-    elif p:
-        final_input = p
+            res_txt = transcribe_mic(audio['bytes'])
+            if "❌" not in res_txt and "失败" not in res_txt:
+                st.session_state.voice_draft = res_txt
+                st.rerun() # 强制刷新以显示编辑框
+            else:
+                st.error(res_txt)
 
-    # 执行发送
+    # 4. 输入逻辑分流：如果有语音草稿显示编辑框，否则显示底部聊天框
+    final_input = None
+
+    if st.session_state.voice_draft:
+        # --- 语音编辑模式 ---
+        with st.container(border=True):
+            st.markdown("##### 🎙️ 确认语音内容")
+            # 让用户修改识别结果
+            edited_text = st.text_area("请编辑或确认：", value=st.session_state.voice_draft, height=100)
+            
+            col_send, col_cancel = st.columns(2)
+            # 确认发送
+            if col_send.button("✅ 发送", use_container_width=True):
+                final_input = edited_text
+                st.session_state.voice_draft = "" # 清空草稿
+                # 注意：这里不加 rerun，让代码往下走到发送逻辑
+            
+            # 取消发送
+            if col_cancel.button("🗑️ 放弃", use_container_width=True):
+                st.session_state.voice_draft = "" # 清空草稿
+                st.rerun()
+    else:
+        # --- 普通文本模式 ---
+        if p := st.chat_input("输入灵感..."):
+            final_input = p
+
+    # 5. 执行发送 (通用逻辑)
     if final_input:
         if not SETTINGS["api_key"]: st.error("Secrets未配")
         else:
-            SESS["messages"].append({"role": "user", "content": final_input}); save_session_db(st.session_state.current_session_id, SESS, CURRENT_USER)
+            SESS["messages"].append({"role": "user", "content": final_input})
+            save_session_db(st.session_state.current_session_id, SESS, CURRENT_USER)
+            
             with st.chat_message("user"): st.markdown(final_input)
+            
             with st.chat_message("assistant"):
                 strm = call_ai_stream([{"role":"system","content":act_p}] + SESS["messages"], SETTINGS)
                 if isinstance(strm, str): st.error(strm)
                 else:
                     ans = st.write_stream(stream_parser(strm))
-                    SESS["messages"].append({"role": "assistant", "content": ans}); save_session_db(st.session_state.current_session_id, SESS, CURRENT_USER)
-            # 如果是语音触发的，强制刷新页面以重置录音控件状态
-            if audio: st.rerun()
+                    SESS["messages"].append({"role": "assistant", "content": ans})
+                    save_session_db(st.session_state.current_session_id, SESS, CURRENT_USER)
+            
+            # 发送完成后强制刷新，确保状态同步
+            st.rerun()
 
 # === 升级版：素材研讨会 (三人交互) ===
 elif app_mode == "📂 素材提取 (研讨)":
