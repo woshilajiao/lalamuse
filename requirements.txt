@@ -5,3 +5,4 @@ supabase
 python-docx
 groq
 pypdf
+streamlit-mic-recorder

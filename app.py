@@ -14,6 +14,8 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from groq import Groq
 from pypdf import PdfReader
+# --- 新增：录音组件库 ---
+from streamlit_mic_recorder import mic_recorder
 
 # ==========================================
 # 1. 基础配置
@@ -45,7 +47,7 @@ GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_MODEL = "deepseek-chat"
 
-# 剧本格式规则
+# 剧本格式规则 (保持原样)
 SCRIPT_STYLE_GUIDE = """
 你是一名好莱坞专业编剧。请严格按照以下【紧凑格式】、【内容要求】创作剧本，不要有多余空行。
 
@@ -65,14 +67,14 @@ SCRIPT_STYLE_GUIDE = """
 3. 情感层次：善于从潜台词中展示冲突，不要直白喊出来。
 """
 
-# 普通对话人设
+# 普通对话人设 (保持原样)
 DEFAULT_PERSONAS = {
 	"默认-知心老友":"你是我无话不谈的创意搭档。请用自然、口语化、直率的语气和我对话。严禁使用括号描写动作，直接说话。**重要：请时刻跟随用户最新的话题，不要反复纠结于用户之前提到的旧话题**。",
     "模式-严厉导师":"你是一位在好莱坞拥有30年经验的严厉编剧导师。不要说客套话，不要盲目鼓励。你需要一针见血地指出用户灵感中的逻辑漏洞、陈词滥调和人物动机不合理之处。说话风格：犀利、专业、不留情面，提出的建议必须具有建设性。",
     "模式-苏格拉底":"你是一个只会提问的哲学家，通过提出层层递进的问题引导用户自己发现答案，或者发现自己思维中的盲区。",
 }
 
-# 研讨会专用 System Prompt
+# 研讨会专用 System Prompt (保持原样)
 SEMINAR_SYSTEM_PROMPT = """
 你正在在这个三人编剧工作室中（麦基、王老师、用户）。你负责扮演两位资深剧本顾问。
 
@@ -140,6 +142,7 @@ def extract_text_from_file(uploaded_file):
     except Exception as e: return f"读取失败: {str(e)}"
     return content
 
+# 原始的文件转录函数 (用于研讨会模式上传文件)
 def transcribe_audio(uploaded_file):
     if not GROQ_API_KEY: return "❌ 请配置 GROQ_API_KEY"
     client = Groq(api_key=GROQ_API_KEY)
@@ -148,6 +151,19 @@ def transcribe_audio(uploaded_file):
         return client.audio.transcriptions.create(
             file=(uploaded_file.name, uploaded_file.read()),
             model="whisper-large-v3", response_format="text"
+        )
+    except Exception as e: return f"转录失败: {str(e)}"
+
+# --- 新增：麦克风录音转录函数 (处理 raw bytes) ---
+def transcribe_mic(audio_bytes):
+    if not GROQ_API_KEY: return "❌ 请配置 GROQ_API_KEY (Secrets)"
+    client = Groq(api_key=GROQ_API_KEY)
+    try:
+        # Whisper 需要文件名，这里模拟一个
+        return client.audio.transcriptions.create(
+            file=("mic_input.wav", audio_bytes),
+            model="whisper-large-v3", 
+            response_format="text"
         )
     except Exception as e: return f"转录失败: {str(e)}"
 
@@ -209,7 +225,6 @@ def save_session_db(sid, data, u):
     sb = init_supabase()
     if sb:
         try:
-            # 将结果赋值给 _ (下划线)，告诉 Python "我不需要显示这个结果"
             _ = sb.table("chat_history").upsert({"id": sid, "username": u, "data": data}).execute()
         except:
             pass
@@ -313,20 +328,48 @@ st.title(SESS['title'])
 if app_mode == "💬 对话":
     st.header("💬 灵感对话")
     for m in SESS["messages"]: 
-        # 只显示普通对话，不显示素材研讨的记录（如果需要区分的话）
-        # 这里暂时简单处理：显示所有记录。如果想区分，可以在message里加tag
         with st.chat_message(m["role"]): st.markdown(m["content"])
-    if p := st.chat_input():
+    
+    # --- 新增：语音录入区 ---
+    c_mic, c_void = st.columns([0.2, 0.8])
+    with c_mic:
+        # 录音按钮：点击录音，再次点击停止并发送
+        audio = mic_recorder(
+            start_prompt="🎤 录音",
+            stop_prompt="⏹️ 发送",
+            key='audio_chat',
+            just_once=True,
+            use_container_width=True
+        )
+    
+    # 接收文本输入
+    p = st.chat_input("输入灵感...")
+    
+    # 逻辑：优先处理语音，其次处理文本
+    final_input = None
+    if audio and 'bytes' in audio:
+        with st.spinner("正在听写..."):
+            final_input = transcribe_mic(audio['bytes'])
+            if "❌" in final_input or "失败" in final_input:
+                st.error(final_input)
+                final_input = None
+    elif p:
+        final_input = p
+
+    # 执行发送
+    if final_input:
         if not SETTINGS["api_key"]: st.error("Secrets未配")
         else:
-            SESS["messages"].append({"role": "user", "content": p}); save_session_db(st.session_state.current_session_id, SESS, CURRENT_USER)
-            with st.chat_message("user"): st.markdown(p)
+            SESS["messages"].append({"role": "user", "content": final_input}); save_session_db(st.session_state.current_session_id, SESS, CURRENT_USER)
+            with st.chat_message("user"): st.markdown(final_input)
             with st.chat_message("assistant"):
                 strm = call_ai_stream([{"role":"system","content":act_p}] + SESS["messages"], SETTINGS)
                 if isinstance(strm, str): st.error(strm)
                 else:
                     ans = st.write_stream(stream_parser(strm))
                     SESS["messages"].append({"role": "assistant", "content": ans}); save_session_db(st.session_state.current_session_id, SESS, CURRENT_USER)
+            # 如果是语音触发的，强制刷新页面以重置录音控件状态
+            if audio: st.rerun()
 
 # === 升级版：素材研讨会 (三人交互) ===
 elif app_mode == "📂 素材提取 (研讨)":
@@ -368,7 +411,6 @@ elif app_mode == "📂 素材提取 (研讨)":
     # 4. 你的发言 (参与讨论)
     if user_input := st.chat_input("发表你的观点，或追问老师..."):
         # --- 优化点：给你的输入加权重 ---
-        # 我们给用户的输入加一个前缀，告诉 AI 这是最高指令，必须回应
         formatted_input = f"【主编剧/制片人 指示】：{user_input}\n(请两位老师针对我的指示进行反馈，并给出具体的修改建议)"
         
         SESS["messages"].append({"role": "user", "content": formatted_input})
@@ -423,8 +465,6 @@ elif app_mode == "📂 素材提取 (研讨)":
                 ctx = [{"role": "system", "content": SEMINAR_SYSTEM_PROMPT}] + SESS["messages"]
                 ctx.append({"role": "user", "content": summary_prompt})
                 
-                summary = call_ai_blocking("开始总结", "你是一个专业的会议记录员，请基于上下文执行总结指令。", SETTINGS) # 这里稍微hack一下，直接用阻塞调用
-                # 实际上 call_ai_blocking 的参数逻辑有点局限，我们直接调 stream 函数更灵活，或者构造一次性请求
                 # 修正：直接用 messages 调用 non-stream
                 client = OpenAI(api_key=SETTINGS["api_key"], base_url=SETTINGS["base_url"])
                 final_res = client.chat.completions.create(model=SETTINGS["model_name"], messages=ctx, temperature=0.7).choices[0].message.content
